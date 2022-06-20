@@ -1,0 +1,109 @@
+name: Test application
+
+on:
+    pull_request:
+    push:
+        branches:
+            - '[0-9]+.[0-9]+'
+            - '[0-9]+.x'
+
+jobs:
+    php:
+        name: '${{ matrix.job-name-prefix }}PHP ${{ matrix.php-version }}, ES ${{ matrix.elasticsearch-version }}'
+        runs-on: ubuntu-latest
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - php-version: '5.6'
+                      elasticsearch-version: '5.6.14'
+                      lint: false
+                      symfony-version: '^2.8'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '7.0'
+                      elasticsearch-version: '5.6.14'
+                      lint: false
+                      symfony-version: '^3.4'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '7.2'
+                      elasticsearch-version: '5.6.14'
+                      lint: false
+                      symfony-version: '^3.4'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '7.3'
+                      elasticsearch-version: '5.6.14'
+                      lint: false
+                      symfony-version: '^4.4'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '7.4'
+                      elasticsearch-version: '5.6.14'
+                      lint: true
+                      symfony-version: '^5.0'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '7.4'
+                      job-name-prefix: 'Allow to fail: '
+                      elasticsearch-version: '7.11.1'
+                      lint: true
+                      symfony-version: '^5.0'
+                      elasticsearch-package-constraint: '^5.0'
+
+                    - php-version: '8.0'
+                      job-name-prefix: 'Allow to fail: '
+                      elasticsearch-version: '7.11.1'
+                      lint: true
+                      symfony-version: '^5.0'
+                      elasticsearch-package-constraint: '^7.0'
+
+        services:
+            elasticsearch:
+                image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.elasticsearch-version }}
+                ports:
+                    - 9200:9200
+                env:
+                    discovery.type: 'single-node'
+                    xpack.security.enabled: 'false'
+                    ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+                options: --health-cmd="curl http://localhost:9200/_cluster/health" --health-interval=10s --health-timeout=5s --health-retries=5
+
+        steps:
+            - name: Checkout project
+              uses: actions/checkout@v2
+
+            - name: Install and configure PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: ${{ matrix.php-version }}
+                  tools: 'composer'
+
+            - name: Get composer cache directory
+              id: composer-cache-dir
+              run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+
+            - name: Cache dependencies
+              uses: actions/cache@v2
+              id: composer-cache
+              with:
+                  path: ${{ steps.composer-cache-dir.outputs.dir }}
+                  key: ${{ runner.os }}-composer-${{ hashFiles('composer.json', 'composer.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-composer-
+
+            - name: Install dependencies
+              run: |
+                  composer validate
+                  composer require --no-update symfony/symfony:${{ matrix.symfony-version }}
+                  composer require --no-update elasticsearch/elasticsearch:${{ matrix.elasticsearch-package-constraint }}
+                  composer install --no-interaction --prefer-dist
+
+            - name: Fix code style
+              if: ${{ matrix.lint }}
+              run: vendor/bin/phpcs -p --standard=PSR2 --ignore=vendor/,Tests/app/,Profiler/Handler/BackwardCompatibilityWriteTrait.php ./
+
+            - name: Run tests
+              run: vendor/bin/simple-phpunit
